@@ -132,7 +132,7 @@ function view(s: Seat, bagLeft: number, players: number, firstPrice: boolean) {
 if (process.argv[1]?.endsWith("sim.ts")) {
   const N = Number(process.argv[2] ?? 40);
   const variants: Record<string, Partial<Params>> = JSON.parse(process.argv[3] ?? '{"base":{}}');
-  const field = (process.argv[4] ?? "sims") as "sims" | "self";
+  const field = (process.argv[4] ?? "sims") as "sims" | "self" | "mixed";
   const fieldBrain = new Brain(lex, { ...DEFAULT_PARAMS, ...JSON.parse(process.argv[5] ?? "{}") });
   for (const [name, over] of Object.entries(variants)) {
     const brain = new Brain(lex, { ...DEFAULT_PARAMS, ...over });
@@ -142,6 +142,8 @@ if (process.argv[1]?.endsWith("sim.ts")) {
       const opp: Kind[] =
         field === "self"
           ? Array.from({ length: 5 }, () => ({ t: "Brain", brain: fieldBrain, name: "def" }) as Kind)
+          : field === "mixed"
+          ? [{ t: "Brain", brain: fieldBrain, name: "a" }, { t: "Brain", brain: fieldBrain, name: "b" }, { t: "Starter" }, { t: "Aggressive" }, { t: "ValueBidder" }]
           : [{ t: "Aggressive" }, { t: "ValueBidder" }, { t: "Cheapskate" }, { t: "Starter" }, { t: "Aggressive" }];
       const sc = runMatch([{ t: "Brain", brain, name }, ...opp]);
       const best = Math.max(...sc.slice(1));

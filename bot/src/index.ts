@@ -27,7 +27,7 @@ import {
 import { Identity } from "spacetimedb";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Lexicon, countsFromMap, idx } from "./engine.js";
+import { LETTER_VALUE, Lexicon, countsFromMap, idx } from "./engine.js";
 import { Brain, DEFAULT_PARAMS, freshUnseen, type View } from "./brain.js";
 
 const HOST = process.env.STDB_HOST ?? "https://maincloud.spacetimedb.com";
@@ -131,10 +131,14 @@ function tryBid(conn: DbConnection, auctionId: bigint, matchId: bigint, letter: 
   const t0 = Date.now();
   const v = buildView(conn, matchId);
   if (!v) return;
+  // Instant safety bid (face value), replaced below by the computed bid.
+  // Bids are replaceable while the auction is open.
+  const quick = v.bagLeft === 0 ? 0 : Math.min(v.balance, LETTER_VALUE[idx(letter)]! + 1);
+  if (quick > 0) conn.reducers.submitBid({ auctionId, amount: BigInt(quick) }).catch(() => {});
   const paid = (v as any)._paid.get(letter) as number[] | undefined;
   v.lastPaid = paid?.slice(-4);
   const amount = brain.decideBid(v, letter, Number(auctionId % 100000n));
-  if (amount > 0) {
+  if (amount > 0 || quick > 0) {
     conn.reducers.submitBid({ auctionId, amount: BigInt(amount) }).catch(logFailure(`bid on ${auctionId}`));
   }
   console.log(`[${BOT_NAME}] '${letter}' bid ${amount} (bal ${v.balance}, bag ${v.bagLeft}, ${Date.now() - t0}ms)`);
