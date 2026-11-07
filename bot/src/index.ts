@@ -322,8 +322,15 @@ function onConnect(conn: DbConnection, identity: Identity, token: string) {
   });
 }
 
+// NO_REJOIN=1: finish any running match, then stay out of the lobby (pause).
+const NO_REJOIN = process.env.NO_REJOIN === "1";
+
 function joinLobby(conn: DbConnection) {
   if (myBotId === null) return;
+  if (NO_REJOIN) {
+    console.log(`[${BOT_NAME}] NO_REJOIN set: not joining the lobby`);
+    return;
+  }
   const inRunning = Array.from(conn.db.matchParticipant.iter()).some((p) => {
     if (p.botId !== myBotId) return false;
     const m = conn.db.matchState.id.find(p.matchId);
