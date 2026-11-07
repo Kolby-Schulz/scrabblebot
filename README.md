@@ -35,3 +35,11 @@ Override live params without code changes: `BOT_PARAMS='{"bidMult":2.8}' npm sta
 - Read rivals' `paid` prices live and shift `bidMult` toward the observed equilibrium.
 - First-price matches: shading logic exists but is untuned.
 - Denial bids on Q/Z/X/J against the current score leader (`denial` param, unused).
+
+## Tuning round 2 (self-play, 80–150 matches per variant)
+- `minPlayLen` 7 is clearly right: 6 → 0% wins, 8 → 10% (even share is 17%).
+- `bidMult` 2.5 holds: 2.2–2.8 are all no better.
+- `capEarly` 0.35 → **0.5** (slightly higher avg score, no extra latency).
+- More MC samples / a larger future horizon: no significant gain, up to 15× slower, not adopted.
+- Conclusion: parameters are on a plateau. Further gains need new behavior (adaptive bidding
+  from observed rival prices, denial bids), not more knob-turning.
