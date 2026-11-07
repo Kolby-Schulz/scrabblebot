@@ -10,6 +10,9 @@ const longestFirst = [...lex.set].sort((a, b) => b.length - a.length);
 type Kind =
   | { t: "Cheapskate" | "ValueBidder" | "Aggressive" }
   | { t: "Starter" }
+  // "Hot": bids like the live real-bot market (~6 + 1.5 x face value, +-3),
+  // plays words with our word policy. Reproduces the 12-16 coin/tile lobbies.
+  | { t: "Hot"; brain: Brain }
   | { t: "Brain"; brain: Brain; name: string };
 
 interface Seat {
@@ -45,6 +48,9 @@ function play(s: Seat, w: string) {
   for (let i = 0; i < 26; i++) s.played[i]! += c[i]!;
 }
 import { wordScore as scoreOf } from "./engine.js";
+
+const HOT_BASE = Number(process.env.HOT_BASE ?? 6);
+const HOT_K = Number(process.env.HOT_K ?? 1.5);
 
 function rnd(n: number) {
   return Math.floor(Math.random() * n);
@@ -84,7 +90,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
     // word phase at auction open (smart bots)
     for (const s of seats) {
       s.unseen[L]!--;
-      if (s.kind.t === "Brain") {
+      if (s.kind.t === "Brain" || s.kind.t === "Hot") {
         const v = view(s, bagLeft, seats, firstPrice, market());
         for (const w of s.kind.brain.decideWords(v, bagLeft === 0)) play(s, w);
       }
@@ -100,6 +106,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
         case "ValueBidder": amt = Math.max(val + jit, 1); break;
         case "Aggressive": amt = Math.max(val + ("AEIOU".includes(letter) ? 4 : 2) + jit, 1); break;
         case "Starter": amt = s.rack[L]! === 0 ? val + 2 : Math.max(1, val); break;
+        case "Hot": amt = bagLeft === 0 ? 0 : Math.max(1, Math.round(HOT_BASE + HOT_K * val + (rnd(7) - 3))); break;
         case "Brain": amt = s.kind.brain.decideBid(view(s, bagLeft, seats, firstPrice, market()), letter, seed++); break;
       }
       amt = Math.min(amt, s.bal);
@@ -155,7 +162,7 @@ function view(s: Seat, bagLeft: number, seats: Seat[], firstPrice: boolean, mark
 if (process.argv[1]?.endsWith("sim.ts")) {
   const N = Number(process.argv[2] ?? 40);
   const variants: Record<string, Partial<Params>> = JSON.parse(process.argv[3] ?? '{"base":{}}');
-  const field = (process.argv[4] ?? "sims") as "sims" | "self" | "mixed";
+  const field = (process.argv[4] ?? "sims") as "sims" | "self" | "mixed" | "hot";
   const fieldBrain = new Brain(lex, { ...DEFAULT_PARAMS, ...JSON.parse(process.argv[5] ?? "{}") });
   for (const [name, over] of Object.entries(variants)) {
     const brain = new Brain(lex, { ...DEFAULT_PARAMS, ...over });
@@ -165,6 +172,8 @@ if (process.argv[1]?.endsWith("sim.ts")) {
       const opp: Kind[] =
         field === "self"
           ? Array.from({ length: 5 }, () => ({ t: "Brain", brain: fieldBrain, name: "def" }) as Kind)
+          : field === "hot"
+          ? [{ t: "Brain", brain: fieldBrain, name: "a" }, { t: "Hot", brain: fieldBrain }, { t: "Hot", brain: fieldBrain }, { t: "Hot", brain: fieldBrain }, { t: "Hot", brain: fieldBrain }]
           : field === "mixed"
           ? [{ t: "Brain", brain: fieldBrain, name: "a" }, { t: "Brain", brain: fieldBrain, name: "b" }, { t: "Starter" }, { t: "Aggressive" }, { t: "ValueBidder" }]
           : [{ t: "Aggressive" }, { t: "ValueBidder" }, { t: "Cheapskate" }, { t: "Starter" }, { t: "Aggressive" }];

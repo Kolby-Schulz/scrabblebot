@@ -45,6 +45,11 @@ export interface Params {
   // have coins, bid at least needFloor * market price on any useful tile.
   // Live match 42809: 24 straight auctions lost while holding 76 coins.
   needFloor: number;
+  // Stalled rack: no minPlayLen word, coins < stallCash x market (can't buy
+  // our way out) -> cash in the best word of >= stallLen. Live 42864 held
+  // ELBUSAI ~30 auctions instead of playing ABSEIL. 0 = off.
+  stallCash: number;
+  stallLen: number;
   fpShade: number; // first-price: fraction of value to bid
   fpOver: number; // first-price: max coins above the letter's market price
   hvTilt: number; // extra bid per point of face value (high-value letters triple in 7s)
@@ -78,7 +83,9 @@ export const DEFAULT_PARAMS: Params = {
   budgetAware: 1, // mixed field 44% vs 32% (200 matches)
   choiceAware: 0,
   hvTilt: 0,
-  needFloor: 0.8, // mixed 36% vs 33%, avg +2.7; fixes live starvation (42809)
+  needFloor: 0, // off: hurts vs market-priced fields (hot 44% vs 54%); live 4,5,4,5,3,6
+  stallCash: 0,
+  stallLen: 6,
   fpShade: 0.7, // first-price sweep: 0.7-0.75 with +5 best
   fpOver: 5, // +1.5 lost most auctions (48%); +5 ~70% vs tuned copies
 };
@@ -253,8 +260,11 @@ export class Brain {
         : v.marketPaid ?? LETTER_VALUE[idx(letter)]! + 2;
       bid = Math.min(bid * this.p.fpShade, mk + this.p.fpOver);
     }
+    // Trigger: no minPlayLen word in the rack yet (any rack size short of a clog).
+    // Live 42851: 7-8 tiles, 67-74 coins, no 7-letter word, ~25 auctions lost.
     if (this.p.needFloor > 0 && v.marketPaid && val > 0.5 &&
-        total(v.rack) < this.p.minPlayLen && v.balance > 2 * v.marketPaid) {
+        v.balance > 2 * v.marketPaid && total(v.rack) < this.p.clogSize &&
+        this.lex.best(Int8Array.from(v.rack), this.p.minPlayLen).score === 0) {
       bid = Math.max(bid, this.p.needFloor * v.marketPaid);
     }
     let b = Math.floor(Math.min(bid, v.balance * cap + 1));
@@ -281,6 +291,9 @@ export class Brain {
       const floorCoins = Math.max(this.p.liquidityFloor, this.p.liqMarket * (v.marketPaid ?? 0));
       if (v.balance < floorCoins && v.bagLeft > 0) minLen = Math.min(minLen, this.p.liqMinLen);
       if (size >= this.p.clogSize) minLen = Math.min(minLen, 5);
+      if (this.p.stallCash > 0 && v.marketPaid && v.bagLeft > 0 &&
+          v.balance < this.p.stallCash * v.marketPaid && !cands.some((c) => c.len >= this.p.minPlayLen))
+        minLen = Math.min(minLen, this.p.stallLen);
       // Late game: fewer tiles coming, so holding out for 7s pays less.
       if (v.bagLeft < 8) minLen = Math.min(minLen, 6);
       let best: { w: string; s: number; c: Counts } | null = null;
