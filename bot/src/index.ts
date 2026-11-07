@@ -241,7 +241,11 @@ function onConnect(conn: DbConnection, identity: Identity, token: string) {
     ]);
 
   conn.db.matchParticipant.onInsert((_c, p) => {
-    if (myBotId !== null && p.botId === myBotId) watchMatch(conn, p.matchId);
+    // Only matches newer than any we've seen: skip our finished history.
+    if (myBotId !== null && p.botId === myBotId && p.matchId >= newestMatch) {
+      newestMatch = p.matchId;
+      watchMatch(conn, p.matchId);
+    }
   });
   conn.db.auction.onInsert((_ctx: EventContext, a) => {
     if (a.status.tag === "Open") tryBid(conn, a.id, a.matchId, a.letter);
@@ -308,6 +312,7 @@ function subscribeMine(conn: DbConnection) {
       let latest: bigint | null = null;
       for (const p of conn.db.matchParticipant.iter())
         if (p.botId === botId && (latest === null || p.matchId > latest)) latest = p.matchId;
+      if (latest !== null && latest > newestMatch) newestMatch = latest;
       if (latest !== null) watchMatch(conn, latest, () => bootstrapActivity(conn));
       else bootstrapActivity(conn);
     })
@@ -315,6 +320,7 @@ function subscribeMine(conn: DbConnection) {
     .subscribe([tables.matchParticipant.where((r) => r.botId.eq(botId))]);
 }
 
+let newestMatch = 0n;
 const watched = new Map<string, { unsubscribe(): void }>();
 function watchMatch(conn: DbConnection, matchId: bigint, then?: () => void) {
   const key = String(matchId);

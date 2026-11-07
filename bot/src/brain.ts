@@ -20,6 +20,8 @@ export interface Params {
   capEarly: number; // max fraction of balance on one tile, start of match
   minPlayLen: number; // hold out for words at least this long
   liquidityFloor: number; // play a smaller word if balance dips below this
+  liqMarket: number; // ...or below liqMarket * market price (0 = off)
+  liqMinLen: number; // shortest word allowed when cash-starved
   clogSize: number; // rack size at which we cash in a word anyway
   denial: number; // weight on value of tile to the leader (anti-leader bids)
   // Budget pacing: mult *= clamp((affordable / marketPrice)^paceGamma).
@@ -43,6 +45,8 @@ export const DEFAULT_PARAMS: Params = {
   capEarly: 0.5,
   minPlayLen: 7,
   liquidityFloor: 6,
+  liqMarket: 0,
+  liqMinLen: 5,
   clogSize: 12,
   denial: 0,
   paceGamma: 0.5, // adaptive budget pacing (big win vs every field tested)
@@ -160,7 +164,8 @@ export class Brain {
       if (!cands.length) break;
       const size = total(rack);
       let minLen = this.p.minPlayLen;
-      if (v.balance < this.p.liquidityFloor) minLen = Math.min(minLen, 5);
+      const floorCoins = Math.max(this.p.liquidityFloor, this.p.liqMarket * (v.marketPaid ?? 0));
+      if (v.balance < floorCoins && v.bagLeft > 0) minLen = Math.min(minLen, this.p.liqMinLen);
       if (size >= this.p.clogSize) minLen = Math.min(minLen, 5);
       // Late game: fewer tiles coming, so holding out for 7s pays less.
       if (v.bagLeft < 8) minLen = Math.min(minLen, 6);
