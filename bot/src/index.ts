@@ -199,8 +199,12 @@ function tryPlayWord(conn: DbConnection) {
     Promise.allSettled(
       words.map((word) => conn.reducers.submitWord({ matchId, word }).catch(logFailure(`playing '${word}'`))),
     ).then(() => {
-      wordBusy.delete(key);
-      if (final) tryPlayWord(conn);
+      // The rack update can land just after the reducer resolves; wait a beat
+      // so we don't resubmit the same word from a stale rack.
+      setTimeout(() => {
+        wordBusy.delete(key);
+        tryPlayWord(conn);
+      }, 250);
     });
   }
 }
