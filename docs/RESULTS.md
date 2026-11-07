@@ -74,7 +74,7 @@ The equilibrium was about 2.5x. Under-bidding is the classic mistake.
 | Choice-aware valuation | 16% (11% at 3x pool) |
 | Choice-aware at 5x bids | 23% |
 
-### 8. "Need tiles" floor (now on, 0.8)
+### 8. "Need tiles" floor (tried, now OFF)
 Live match 42809: 24 straight auctions lost while holding 76 coins and a 7-tile rack.
 Fix: when the rack is shorter than `minPlayLen` and coins > 2x market, bid at least
 `needFloor` x market price on any useful tile.
@@ -106,3 +106,29 @@ most contested tiles.
 
 New defaults: `fpShade` 0.7, `fpOver` 5. The sim gives our seat a small edge, so read these
 relative to each other.
+
+### 10. Realistic "hot" field: the floor reversed, now off
+`npm run sim -- N '<variants>' hot '{}'`: us + 1 copy + 4 market-priced bidders
+(about 6 + 1.5 x face value, +-3; reproduces the live 12-16 coins/tile).
+
+| Variant | hot (150-200) | mixed (200) |
+|---|---|---|
+| **floor off (current)** | **53-54%**, avg 111-112 | 32-53% |
+| floor 0.8 (v2 trigger: no 7-letter word yet) | 44% | 30% |
+| floor 1.0 | 17% | 9% |
+| bidMult 4 / 5 | 26% / 21% | |
+| paceLo 1.0 | 25% | |
+| capEarly 0.8 | 55% (neutral) | 34% (neutral) |
+| stall play at 2x / 3x market | 43% / 39% | 27% |
+
+Live with the floor on: 4, 5, 4, 5, 3, 6, 2. With it off: 2, 1, 5, ...
+Lesson: against market-priced rivals the value-based restraint is right. Paying market
+for tiles that don't fit drains the coins we need for the ones that do.
+
+### Live rival stats (our logs, 3+ matches each)
+| Bot | avg score | tiles/match | coins/tile | 7+ letter words/match |
+|---|---|---|---|---|
+| GodOfThudner | 121 | 18.0 | 11.9 | 1.7 (4.3 words) |
+| LUCENT | 98 | 12.3 | 14.7 | 2.0 |
+| Bron | 93 | 12.6 | 12.2 | 1.7 |
+| us | 84 | 12.9 | 12.9 | 1.4 |
