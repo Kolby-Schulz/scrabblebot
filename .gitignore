@@ -2,4 +2,3 @@ upstream/
 node_modules/
 .token-*
 dist/
-bot/src/module_bindings/

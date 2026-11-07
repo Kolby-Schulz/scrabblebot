@@ -1,12 +1,12 @@
 {
-  "name": "scrabblebot-bot-starter",
+  "name": "scrabblebot-ruthless",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "generate": "npm install --prefix ../spacetimedb && spacetime generate --lang typescript --out-dir src/module_bindings --module-path ../spacetimedb",
+    "generate": "npm install --prefix ../upstream/spacetimedb && spacetime generate --lang typescript --out-dir src/module_bindings --module-path ../upstream/spacetimedb",
     "start": "tsx src/index.ts",
-    "test": "node --import tsx --test src/strategy.test.ts",
+    "sim": "tsx src/sim.ts",
     "build": "tsc"
   },
   "dependencies": {

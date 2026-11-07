@@ -27,7 +27,8 @@ import {
 import { Identity } from "spacetimedb";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { chooseWord, decideBid } from "./strategy.js";
+import { Lexicon, countsFromMap, idx } from "./engine.js";
+import { Brain, DEFAULT_PARAMS, freshUnseen, type View } from "./brain.js";
 
 const HOST = process.env.STDB_HOST ?? "https://maincloud.spacetimedb.com";
 const DB_NAME = process.env.STDB_DB ?? "scrabblebot";
@@ -48,28 +49,15 @@ function saveToken(tok: string) {
   fs.writeFileSync(TOKEN_PATH, tok);
 }
 
-// Load the shared wordlist so the bot can pick playable words locally.
-const dictionaryPath = path.join(
-  path.dirname(new URL(import.meta.url).pathname),
-  "..",
-  "..",
-  "spacetimedb",
-  "wordlist.txt",
+const lex = new Lexicon(
+  process.env.WORDLIST ?? path.join(path.dirname(new URL(import.meta.url).pathname), "..", "wordlist.txt"),
 );
-const DICTIONARY: string[] = fs.existsSync(dictionaryPath)
-  ? fs
-      .readFileSync(dictionaryPath, "utf8")
-      .split("\n")
-      .map((l) => l.trim().toUpperCase())
-      .filter((l) => l.length >= 2)
-  : [];
-DICTIONARY.sort((a, b) => b.length - a.length); // longest first for greedy pick
+const brain = new Brain(lex, { ...DEFAULT_PARAMS, ...JSON.parse(process.env.BOT_PARAMS ?? "{}") });
 
 let myIdentity: Identity | null = null;
 let myBotId: bigint | null = null;
 const bidsByAuction = new Set<string>();
-const lastWordAttemptByMatch = new Map<string, number>();
-const WORD_RETRY_MS = 500;
+const wordBusy = new Set<string>(); // match ids with a word submission in flight
 
 function resolveMyBotId(conn: DbConnection): bigint | null {
   if (!myIdentity) return null;
@@ -77,10 +65,7 @@ function resolveMyBotId(conn: DbConnection): bigint | null {
   return cred ? cred.botId : null;
 }
 
-function rackForMatch(
-  conn: DbConnection,
-  matchId: bigint,
-): Map<string, number> {
+function rackForMatch(conn: DbConnection, matchId: bigint): Map<string, number> {
   const rack = new Map<string, number>();
   for (const h of conn.db.myRack.iter()) {
     if (h.matchId !== matchId) continue;
@@ -89,80 +74,95 @@ function rackForMatch(
   return rack;
 }
 
-function participantForMatch(
-  conn: DbConnection,
-  matchId: bigint,
-): { balance: number; score: number } | null {
+function participantForMatch(conn: DbConnection, matchId: bigint) {
   if (myBotId === null) return null;
   for (const p of conn.db.matchParticipant.iter()) {
-    if (p.matchId !== matchId) continue;
-    if (p.botId !== myBotId) continue;
-    return { balance: Number(p.balance), score: Number(p.score) };
+    if (p.matchId === matchId && p.botId === myBotId)
+      return { balance: Number(p.balance), score: Number(p.score) };
   }
   return null;
 }
 
-// A reducer call fails when the module refuses it, often for an expected
-// reason: a word played just after its match ended, a bid that missed the
-// auction's window. Log it and keep playing; an uncaught failure would stop
-// the bot.
-function logFailure(what: string) {
-  return (err: unknown) =>
-    console.warn(
-      `[${BOT_NAME}] ${what} failed: ${err instanceof Error ? err.message : err}`,
-    );
+// Build the brain's view. Unseen tiles = full bag - every auctioned letter
+// - my own starting rack (= rack now + letters I played - letters I won).
+function buildView(conn: DbConnection, matchId: bigint): View | null {
+  const me = participantForMatch(conn, matchId);
+  const m = conn.db.matchState.id.find(matchId);
+  if (!me || !m) return null;
+  const rack = countsFromMap(rackForMatch(conn, matchId));
+  const unseen = freshUnseen();
+  const start = Int8Array.from(rack);
+  const lastPaid = new Map<string, number[]>();
+  for (const a of conn.db.auction.iter()) if (a.matchId === matchId) unseen[idx(a.letter)]!--;
+  for (const r of conn.db.auctionResult.iter()) {
+    if (r.matchId !== matchId) continue;
+    if (r.winnerBotId === myBotId) start[idx(r.letter)]!--;
+    if (r.winnerBotId != null) {
+      const l = lastPaid.get(r.letter) ?? [];
+      l.push(Number(r.paid));
+      lastPaid.set(r.letter, l);
+    }
+  }
+  for (const w of conn.db.wordPlay.iter()) {
+    if (w.matchId !== matchId || w.botId !== myBotId) continue;
+    for (const c of w.word) start[idx(c)]!++;
+  }
+  for (let i = 0; i < 26; i++) unseen[i] = Math.max(0, unseen[i]! - Math.max(0, start[i]!));
+  let players = 0;
+  for (const p of conn.db.matchParticipant.iter()) if (p.matchId === matchId) players++;
+  return {
+    rack, balance: me.balance, bagLeft: m.bagTotal, players, unseen,
+    firstPrice: m.auctionType.tag === "FirstPrice",
+    lastPaid: undefined,
+    ...{ _paid: lastPaid },
+  } as View;
 }
 
-function tryBid(
-  conn: DbConnection,
-  auctionId: bigint,
-  matchId: bigint,
-  letter: string,
-) {
+function logFailure(what: string) {
+  return (err: unknown) =>
+    console.warn(`[${BOT_NAME}] ${what} failed: ${err instanceof Error ? err.message : err}`);
+}
+
+function tryBid(conn: DbConnection, auctionId: bigint, matchId: bigint, letter: string) {
   if (myBotId === null) return;
   const key = `${matchId}:${auctionId}`;
   if (bidsByAuction.has(key)) return;
-  const participant = participantForMatch(conn, matchId);
-  if (!participant) return;
-  const amount = decideBid({
-    letter,
-    myBalance: participant.balance,
-    myRack: rackForMatch(conn, matchId),
-  });
-  if (amount <= 0) return;
-  conn.reducers
-    .submitBid({ auctionId, amount: BigInt(amount) })
-    .catch(logFailure(`bid on auction ${auctionId}`));
   bidsByAuction.add(key);
-  console.log(
-    `[${BOT_NAME}] bid ${amount} on '${letter}' (match ${matchId}, auction ${auctionId})`,
-  );
+  const t0 = Date.now();
+  const v = buildView(conn, matchId);
+  if (!v) return;
+  const paid = (v as any)._paid.get(letter) as number[] | undefined;
+  v.lastPaid = paid?.slice(-4);
+  const amount = brain.decideBid(v, letter, Number(auctionId % 100000n));
+  if (amount > 0) {
+    conn.reducers.submitBid({ auctionId, amount: BigInt(amount) }).catch(logFailure(`bid on ${auctionId}`));
+  }
+  console.log(`[${BOT_NAME}] '${letter}' bid ${amount} (bal ${v.balance}, bag ${v.bagLeft}, ${Date.now() - t0}ms)`);
+  tryPlayWord(conn);
 }
 
 function tryPlayWord(conn: DbConnection) {
   if (myBotId === null) return;
-  // Only matches still being played. The bot keeps its letters from
-  // matches that have ended, but can't play them.
-  const matches = new Set<bigint>();
   for (const p of conn.db.matchParticipant.iter()) {
     if (p.botId !== myBotId) continue;
-    const m = conn.db.matchState.id.find(p.matchId);
-    if (m?.status.tag === "Running") matches.add(p.matchId);
-  }
-  const now = Date.now();
-  for (const matchId of matches) {
+    const matchId = p.matchId;
+    const m = conn.db.matchState.id.find(matchId);
+    if (m?.status.tag !== "Running") continue;
     const key = String(matchId);
-    if (now - (lastWordAttemptByMatch.get(key) ?? 0) < WORD_RETRY_MS) continue;
-    lastWordAttemptByMatch.set(key, now);
-    const word = chooseWord({
-      myRack: rackForMatch(conn, matchId),
-      dictionary: DICTIONARY,
+    if (wordBusy.has(key)) continue;
+    const v = buildView(conn, matchId);
+    if (!v) continue;
+    const final = m.bagTotal === 0; // last auction is open: dump everything
+    const words = brain.decideWords(v, final);
+    if (!words.length) continue;
+    wordBusy.add(key);
+    console.log(`[${BOT_NAME}] match ${matchId}: playing ${words.join(", ")}${final ? " (final dump)" : ""}`);
+    Promise.allSettled(
+      words.map((word) => conn.reducers.submitWord({ matchId, word }).catch(logFailure(`playing '${word}'`))),
+    ).then(() => {
+      wordBusy.delete(key);
+      if (final) tryPlayWord(conn);
     });
-    if (!word) continue;
-    console.log(`[${BOT_NAME}] match ${matchId}: playing '${word}'`);
-    conn.reducers
-      .submitWord({ matchId, word })
-      .catch(logFailure(`playing '${word}'`));
   }
 }
 
@@ -221,6 +221,9 @@ function onConnect(conn: DbConnection, identity: Identity, token: string) {
   });
   conn.db.myRack.onInsert(() => tryPlayWord(conn));
   conn.db.myRack.onUpdate(() => tryPlayWord(conn));
+  conn.db.matchState.onUpdate((_c, _o, n) => {
+    if (n.status.tag === "Running" && n.bagTotal === 0) tryPlayWord(conn);
+  });
   conn.db.botCredential.onInsert(() => {
     if (myBotId === null) myBotId = resolveMyBotId(conn);
   });
