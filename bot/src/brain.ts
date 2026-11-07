@@ -22,6 +22,12 @@ export interface Params {
   liquidityFloor: number; // play a smaller word if balance dips below this
   clogSize: number; // rack size at which we cash in a word anyway
   denial: number; // weight on value of tile to the leader (anti-leader bids)
+  // Budget pacing: mult *= clamp((affordable / marketPrice)^paceGamma).
+  // affordable = balance / (tiles we still expect to buy). 0 disables.
+  paceGamma: number;
+  paceShare: number; // share of remaining auctions we aim to win
+  paceLo: number;
+  paceHi: number;
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -34,6 +40,10 @@ export const DEFAULT_PARAMS: Params = {
   liquidityFloor: 6,
   clogSize: 12,
   denial: 0,
+  paceGamma: 0,
+  paceShare: 0.25,
+  paceLo: 0.6,
+  paceHi: 1.8,
 };
 
 export interface View {
@@ -44,6 +54,7 @@ export interface View {
   unseen: Counts; // tiles we haven't seen leave the bag (incl. opp start racks)
   firstPrice: boolean;
   lastPaid?: number[]; // recent prices paid for this letter (market)
+  marketPaid?: number; // mean price paid over recent sold auctions (any letter)
 }
 
 // Small deterministic RNG so valuations are stable between re-bids.
@@ -94,6 +105,17 @@ export class Brain {
     return sum / n;
   }
 
+  /** Bid multiplier after budget pacing against the observed market. */
+  paceMult(v: View): number {
+    const base = this.p.bidMult;
+    if (!this.p.paceGamma || v.marketPaid === undefined) return base;
+    const expectBuys = Math.max(1, v.bagLeft * this.p.paceShare);
+    const affordable = v.balance / expectBuys;
+    const ratio = affordable / Math.max(1, v.marketPaid);
+    const f = Math.pow(ratio, this.p.paceGamma);
+    return base * Math.max(this.p.paceLo, Math.min(this.p.paceHi, f));
+  }
+
   decideBid(v: View, letter: string, seed = 1): number {
     // The last auctioned tile closes the match: nobody can ever play it.
     if (v.bagLeft === 0) return 0;
@@ -102,7 +124,7 @@ export class Brain {
     // Coins have no end value, so the cap loosens to 100% as the bag drains.
     const progress = 1 - v.bagLeft / 68;
     const cap = this.p.capEarly + (1 - this.p.capEarly) * Math.max(0, Math.min(1, progress));
-    let bid = val * this.p.bidMult;
+    let bid = val * this.paceMult(v);
     if (v.firstPrice) {
       // shade toward the market price for this letter
       const mk = v.lastPaid?.length

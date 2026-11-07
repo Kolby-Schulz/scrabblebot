@@ -72,6 +72,8 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
       s.unseen[L]!--;
     }
   let seed = 1;
+  const paids: number[] = [];
+  const market = () => (paids.length ? paids.slice(-12).reduce((a, b) => a + b, 0) / Math.min(12, paids.length) : undefined);
   while (bagTotal > 0) {
     const L = draw();
     const letter = chr(L);
@@ -80,7 +82,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
     for (const s of seats) {
       s.unseen[L]!--;
       if (s.kind.t === "Brain") {
-        const v = view(s, bagLeft, seats.length, firstPrice);
+        const v = view(s, bagLeft, seats.length, firstPrice, market());
         for (const w of s.kind.brain.decideWords(v, bagLeft === 0)) play(s, w);
       }
     }
@@ -95,7 +97,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
         case "ValueBidder": amt = Math.max(val + jit, 1); break;
         case "Aggressive": amt = Math.max(val + ("AEIOU".includes(letter) ? 4 : 2) + jit, 1); break;
         case "Starter": amt = s.rack[L]! === 0 ? val + 2 : Math.max(1, val); break;
-        case "Brain": amt = s.kind.brain.decideBid(view(s, bagLeft, seats.length, firstPrice), letter, seed++); break;
+        case "Brain": amt = s.kind.brain.decideBid(view(s, bagLeft, seats.length, firstPrice, market()), letter, seed++); break;
       }
       amt = Math.min(amt, s.bal);
       if (amt > 0) bids.push({ i, amt });
@@ -106,6 +108,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
       const paid = firstPrice ? bids[0]!.amt : bids[1] ? bids[1].amt : 1;
       if (w.bal >= paid) {
         w.bal -= paid;
+        paids.push(paid);
         w.rack[L]!++;
         const t = w.kind.t;
         if (t === "Cheapskate" || t === "ValueBidder" || t === "Aggressive") {
@@ -124,8 +127,8 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
   return seats.map((s) => s.score);
 }
 
-function view(s: Seat, bagLeft: number, players: number, firstPrice: boolean) {
-  return { rack: s.rack, balance: s.bal, bagLeft, players, unseen: s.unseen, firstPrice };
+function view(s: Seat, bagLeft: number, players: number, firstPrice: boolean, marketPaid?: number) {
+  return { rack: s.rack, balance: s.bal, bagLeft, players, unseen: s.unseen, firstPrice, marketPaid };
 }
 
 // ---- CLI: our brain vs a field ----

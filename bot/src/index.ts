@@ -94,8 +94,10 @@ function buildView(conn: DbConnection, matchId: bigint): View | null {
   const start = Int8Array.from(rack);
   const lastPaid = new Map<string, number[]>();
   for (const a of conn.db.auction.iter()) if (a.matchId === matchId) unseen[idx(a.letter)]!--;
+  const sold: { id: bigint; paid: number }[] = [];
   for (const r of conn.db.auctionResult.iter()) {
     if (r.matchId !== matchId) continue;
+    if (r.winnerBotId != null) sold.push({ id: r.auctionId, paid: Number(r.paid) });
     if (r.winnerBotId === myBotId) start[idx(r.letter)]!--;
     if (r.winnerBotId != null) {
       const l = lastPaid.get(r.letter) ?? [];
@@ -114,8 +116,16 @@ function buildView(conn: DbConnection, matchId: bigint): View | null {
     rack, balance: me.balance, bagLeft: m.bagTotal, players, unseen,
     firstPrice: m.auctionType.tag === "FirstPrice",
     lastPaid: undefined,
+    marketPaid: recentMean(sold),
     ...{ _paid: lastPaid },
   } as View;
+}
+
+function recentMean(sold: { id: bigint; paid: number }[]): number | undefined {
+  if (!sold.length) return undefined;
+  sold.sort((a, b) => (a.id < b.id ? -1 : 1));
+  const last = sold.slice(-12);
+  return last.reduce((a, b) => a + b.paid, 0) / last.length;
 }
 
 function logFailure(what: string) {
@@ -141,7 +151,7 @@ function tryBid(conn: DbConnection, auctionId: bigint, matchId: bigint, letter: 
   if (amount > 0 || quick > 0) {
     conn.reducers.submitBid({ auctionId, amount: BigInt(amount) }).catch(logFailure(`bid on ${auctionId}`));
   }
-  console.log(`[${BOT_NAME}] '${letter}' bid ${amount} (bal ${v.balance}, bag ${v.bagLeft}, ${Date.now() - t0}ms)`);
+  console.log(`[${BOT_NAME}] '${letter}' bid ${amount} (x${brain.paceMult(v).toFixed(2)}, mkt ${v.marketPaid?.toFixed(1) ?? '-'}, bal ${v.balance}, bag ${v.bagLeft}, ${Date.now() - t0}ms)`);
   tryPlayWord(conn);
 }
 
