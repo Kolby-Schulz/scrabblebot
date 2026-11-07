@@ -34,13 +34,13 @@ export const DEFAULT_PARAMS: Params = {
   mcSamples: 24,
   futureShare: 0.3,
   maxFuture: 5,
-  bidMult: 2.5, // tuned: ~Nash in self-play; 1.0 loses to everyone
+  bidMult: 3, // with pacing on; fixed-mult Nash was ~2.5
   capEarly: 0.5,
   minPlayLen: 7,
   liquidityFloor: 6,
   clogSize: 12,
   denial: 0,
-  paceGamma: 0,
+  paceGamma: 0.5, // adaptive budget pacing (big win vs every field tested)
   paceShare: 0.25,
   paceLo: 0.6,
   paceHi: 1.8,

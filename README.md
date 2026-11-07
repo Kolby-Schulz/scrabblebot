@@ -43,3 +43,23 @@ Override live params without code changes: `BOT_PARAMS='{"bidMult":2.8}' npm sta
 - More MC samples / a larger future horizon: no significant gain, up to 15× slower, not adopted.
 - Conclusion: parameters are on a plateau. Further gains need new behavior (adaptive bidding
   from observed rival prices, denial bids), not more knob-turning.
+
+## Adaptive bidding (round 3) — now the default
+Budget pacing: `mult = bidMult * clamp((affordable / marketPrice)^0.5, 0.6, 1.8)`, where
+affordable = balance / (25% of remaining auctions) and marketPrice = mean `paid` over the last 12
+sold auctions (public `auction_result`). Flush vs. the market → bid harder; short → pull back.
+Coins are worthless at the end, so this steers toward spending the whole budget.
+
+Win % in self-play (even share = 17%; 80–100 matches each):
+
+| Opponents (5 seats) | Fixed 2.5x (old) | Pacing @2.5x | **Pacing @3x (default)** |
+|---|---|---|---|
+| fixed 1.5x bidders | 59% | 93% | 83% |
+| fixed 2.5x bidders | 16% | 30% | 39% |
+| fixed 3.5x bidders | 70% | 89% | 84% |
+| pacing @2.5x bidders | — | 15% | 24% |
+| pacing @3x bidders | — | 13% | 26% |
+| server sim bots | 330 avg | 350 avg | — |
+
+@3x trades a little against weak fields for more against strong ones, where the prize is decided.
+The live log prints the current multiplier and market price on every bid (`x2.81, mkt 7.4`).
