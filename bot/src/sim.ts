@@ -168,7 +168,7 @@ if (process.argv[1]?.endsWith("sim.ts")) {
           : field === "mixed"
           ? [{ t: "Brain", brain: fieldBrain, name: "a" }, { t: "Brain", brain: fieldBrain, name: "b" }, { t: "Starter" }, { t: "Aggressive" }, { t: "ValueBidder" }]
           : [{ t: "Aggressive" }, { t: "ValueBidder" }, { t: "Cheapskate" }, { t: "Starter" }, { t: "Aggressive" }];
-      const sc = runMatch([{ t: "Brain", brain, name }, ...opp]);
+      const sc = runMatch([{ t: "Brain", brain, name }, ...opp], process.env.FIRST_PRICE === "1");
       const best = Math.max(...sc.slice(1));
       if (sc[0]! > best) wins++;
       sum += sc[0]!;

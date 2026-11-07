@@ -73,3 +73,36 @@ The equilibrium was about 2.5x. Under-bidding is the classic mistake.
 | High-value letter tilt 0.5 / 1.0 | 29% / 29% |
 | Choice-aware valuation | 16% (11% at 3x pool) |
 | Choice-aware at 5x bids | 23% |
+
+### 8. "Need tiles" floor (now on, 0.8)
+Live match 42809: 24 straight auctions lost while holding 76 coins and a 7-tile rack.
+Fix: when the rack is shorter than `minPlayLen` and coins > 2x market, bid at least
+`needFloor` x market price on any useful tile.
+
+| needFloor | mixed (200) | avg | self (150) |
+|---|---|---|---|
+| off | 33% | 128.5 | 18% |
+| **0.8** | **36%** | **131.2** | |
+| 1.0 | 26% | 123.9 | 11% |
+| 1.2 | 22% | 118.5 | |
+
+### 9. First-price auctions (`FIRST_PRICE=1 npm run sim ...`)
+In case the tournament uses first-price. Old shading (0.75 x value, max +1.5 over market) lost
+most contested tiles.
+
+| vs. old-param copies (mixed) | win | avg |
+|---|---|---|
+| old (0.75, +1.5) | 48% | 127 |
+| +0.5 | 2% | 79 |
+| +4 | 66% | 143 |
+| 0.6, +3 | 75% | 148 |
+
+| vs. copies at (0.6, +3) (self) | win | avg |
+|---|---|---|
+| 0.6, +3 | 31% | 85 |
+| 0.6, +5 | 68% | 110 |
+| **0.75, +5** | **70%** | **115** |
+| 0.6, +8 | 46% | 101 |
+
+New defaults: `fpShade` 0.7, `fpOver` 5. The sim gives our seat a small edge, so read these
+relative to each other.

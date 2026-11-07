@@ -50,6 +50,10 @@ marketPrice = mean price paid over the last 12 sold auctions
 - **Spend-down:** in the last `endgameAt` (6) auctions, bid at least
   `balance / (0.5 × tiles left)`, even on tiles we can't use. Coins are worthless soon, and
   winning a tile at least denies it to a rival.
+- **Need tiles:** if the rack is too short for a 7-letter word and we have more than 2x
+  the market price in coins, bid at least `needFloor` (0.8) x market on any useful tile.
+- **First-price** (if a tournament uses it): bid `min(fpShade x bid, letter market + fpOver)`
+  = `min(0.7 x bid, market + 5)`.
 - **Final auction:** bid 0.
 - **Fallback bid:** the live client sends a face-value bid instantly, then replaces it with
   the computed bid, so the 1-second window is never missed.
@@ -94,5 +98,7 @@ Defaults live in `DEFAULT_PARAMS` (`brain.ts`). Override them live with `BOT_PAR
 | `mcSamples` / `futureShare` / `maxFuture` | 24 / 0.3 / 5 | Valuation sampling. |
 | `denial` / `denyAt` / `threatMargin` / `rivalMult` | 0 / 99 / 25 / 2 | Rival blocking (off). |
 | `liqMarket` / `liqMinLen` | 0 / 5 | Market-relative cash floor (off, neutral in testing). |
+| `needFloor` | 0.8 | Bid at least this x market when the rack is too short. |
+| `fpShade` / `fpOver` | 0.7 / 5 | First-price shading. |
 | `hvTilt` | 0 | Bonus for high-value letters (off, slightly negative). |
 | `choiceAware` | 0 | "Pick k of n upcoming tiles" valuation (off, negative). |
