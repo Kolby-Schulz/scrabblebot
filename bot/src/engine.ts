@@ -128,6 +128,34 @@ export class Lexicon {
     return { score: bestS, wi: bestW };
   }
 
+  /**
+   * Best word from `rack` plus at most `k` letters chosen from `pool`: the
+   * value of a plan when we get to pick which upcoming tiles to buy.
+   * Rack letters are used first (they're free); pool letters cost a pick.
+   */
+  bestWithPool(rack: Counts, pool: Counts, k: number): number {
+    let bestS = 0;
+    const { letter, child, sib, term, scores } = this;
+    const dfs = (node: number, picks: number) => {
+      for (let c = child[node]!; c !== -1; c = sib[c]!) {
+        const L = letter[c]!;
+        let fromPool = false;
+        if (rack[L]! > 0) rack[L]!--;
+        else if (picks < k && pool[L]! > 0) {
+          pool[L]!--;
+          fromPool = true;
+        } else continue;
+        const t = term[c]!;
+        if (t !== -1 && scores[t]! > bestS) bestS = scores[t]!;
+        dfs(c, picks + (fromPool ? 1 : 0));
+        if (fromPool) pool[L]!++;
+        else rack[L]!++;
+      }
+    };
+    dfs(0, 0);
+    return bestS;
+  }
+
   /** All spellable words (one per anagram class). */
   all(rack: Counts, minLen = 2): Cand[] {
     const out: Cand[] = [];

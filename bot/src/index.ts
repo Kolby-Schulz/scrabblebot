@@ -184,6 +184,8 @@ function tryBid(conn: DbConnection, auctionId: bigint, matchId: bigint, letter: 
   if (amount > 0 || quick > 0) {
     conn.reducers.submitBid({ auctionId, amount: BigInt(amount) }).catch(logFailure(`bid on ${auctionId}`));
   }
+  logBid(matchId, { l: letter, bid: amount, x: +brain.paceMult(v).toFixed(2), mkt: v.marketPaid ?? null,
+    bal: v.balance, bag: v.bagLeft, rack: [...rackForMatch(conn, matchId)].map(([c, n]) => c.repeat(n)).join("") });
   console.log(`[${BOT_NAME}] '${letter}' bid ${amount} (x${brain.paceMult(v).toFixed(2)}, mkt ${v.marketPaid?.toFixed(1) ?? '-'}, bal ${v.balance}, bag ${v.bagLeft}, ${Date.now() - t0}ms)`);
   tryPlayWord(conn);
 }
@@ -311,6 +313,7 @@ function onConnect(conn: DbConnection, identity: Identity, token: string) {
       if (wasIn) {
         const me = participantForMatch(conn, neu.id);
         console.log(`[${BOT_NAME}] match ${neu.id} ended (score ${me?.score ?? "?"}); rejoining lobby`);
+        writeMatchLog(conn, neu.id);
         joinLobby(conn);
         // Free that match's rows a bit later.
         setTimeout(() => unwatchMatch(neu.id), 5000);
@@ -353,6 +356,42 @@ function subscribeMine(conn: DbConnection) {
 }
 
 let newestMatch = 0n;
+
+// ---- Match log: one JSON line per finished match, for post-mortems ----
+const LOG_DIR = path.join(process.cwd(), "logs");
+const bidLog = new Map<string, unknown[]>();
+function logBid(matchId: bigint, entry: unknown) {
+  const k = String(matchId);
+  if (!bidLog.has(k)) bidLog.set(k, []);
+  bidLog.get(k)!.push(entry);
+}
+function writeMatchLog(conn: DbConnection, matchId: bigint) {
+  try {
+    const k = String(matchId);
+    const scores = [...conn.db.matchParticipant.iter()]
+      .filter((p) => p.matchId === matchId)
+      .map((p) => ({ bot: Number(p.botId), score: Number(p.score), balance: Number(p.balance) }))
+      .sort((a, b) => b.score - a.score);
+    const words = [...conn.db.wordPlay.iter()]
+      .filter((w) => w.matchId === matchId)
+      .map((w) => ({ bot: Number(w.botId), word: w.word, pts: Number(w.totalReward) }));
+    const auctions = [...conn.db.auctionResult.iter()]
+      .filter((r) => r.matchId === matchId)
+      .sort((a, b) => (a.auctionId < b.auctionId ? -1 : 1))
+      .map((r) => ({ l: r.letter, w: r.winnerBotId == null ? null : Number(r.winnerBotId), paid: Number(r.paid) }));
+    const place = scores.findIndex((x) => x.bot === Number(myBotId)) + 1;
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    fs.appendFileSync(
+      path.join(LOG_DIR, "matches.jsonl"),
+      JSON.stringify({ match: k, at: new Date().toISOString(), me: Number(myBotId), place,
+        params: brain.p, scores, words, auctions, bids: bidLog.get(k) ?? [] }) + "\n",
+    );
+    bidLog.delete(k);
+    console.log(`[${BOT_NAME}] match ${k}: placed ${place}/${scores.length} (logged)`);
+  } catch (e) {
+    console.warn(`[${BOT_NAME}] match log failed`, e);
+  }
+}
 const watched = new Map<string, { unsubscribe(): void }>();
 function watchMatch(conn: DbConnection, matchId: bigint, then?: () => void) {
   const key = String(matchId);

@@ -41,6 +41,7 @@ export interface Params {
   rivalMult: number;
   threatMargin: number;
   rivalSamples: number;
+  choiceAware: number; // >0: value = best word using rack + any k of (k*choiceAware) upcoming tiles
   budgetAware: number; // 1 = re-value with only the tiles we could afford after this bid
   denyAt: number; // only block when bagLeft <= denyAt (coins nearly worthless); 99 = always
 }
@@ -68,6 +69,7 @@ export const DEFAULT_PARAMS: Params = {
   rivalSamples: 6,
   denyAt: 99,
   budgetAware: 0,
+  choiceAware: 0,
 };
 
 export interface View {
@@ -125,18 +127,30 @@ export class Brain {
     for (let s = 0; s < n; s++) {
       // sample m future tiles (common random numbers for with/without)
       const picked: number[] = [];
-      for (let k = 0; k < m && pool.length > 0; k++) {
+      const draw = this.p.choiceAware > 0 ? Math.min(v.bagLeft, Math.round(m * this.p.choiceAware)) : m;
+      for (let k = 0; k < draw && pool.length > 0; k++) {
         const j = Math.floor(rand() * pool.length);
         picked.push(pool[j]!);
         [pool[j], pool[pool.length - 1]] = [pool[pool.length - 1]!, pool[j]!];
         pool.pop();
       }
-      for (const t of picked) r[t]!++;
-      const without = this.lex.greedy2(r);
-      r[L]!++;
-      const withT = this.lex.greedy2(r);
-      r[L]!--;
-      for (const t of picked) r[t]!--;
+      let without: number, withT: number;
+      if (this.p.choiceAware > 0 && m > 0) {
+        // `picked` = tiles that will come up; we may buy any m of them.
+        const pc = new Int8Array(26);
+        for (const t of picked) pc[t]!++;
+        without = this.lex.bestWithPool(r, pc, m);
+        r[L]!++;
+        withT = this.lex.bestWithPool(r, pc, m);
+        r[L]!--;
+      } else {
+        for (const t of picked) r[t]!++;
+        without = this.lex.greedy2(r);
+        r[L]!++;
+        withT = this.lex.greedy2(r);
+        r[L]!--;
+        for (const t of picked) r[t]!--;
+      }
       pool.push(...picked);
       sum += withT - without;
     }

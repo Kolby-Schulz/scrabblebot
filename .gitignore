@@ -2,3 +2,4 @@ upstream/
 node_modules/
 .token-*
 dist/
+bot/logs/
