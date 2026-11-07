@@ -41,6 +41,8 @@ export interface Params {
   rivalMult: number;
   threatMargin: number;
   rivalSamples: number;
+  budgetAware: number; // 1 = re-value with only the tiles we could afford after this bid
+  denyAt: number; // only block when bagLeft <= denyAt (coins nearly worthless); 99 = always
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -64,6 +66,8 @@ export const DEFAULT_PARAMS: Params = {
   rivalMult: 2.0,
   threatMargin: 25,
   rivalSamples: 6,
+  denyAt: 99,
+  budgetAware: 0,
 };
 
 export interface View {
@@ -109,10 +113,10 @@ export class Brain {
   ) {}
 
   /** Expected-score gain from adding `letter` to the rack. */
-  marginal(v: View, letter: string, seed = 1): number {
+  marginal(v: View, letter: string, seed = 1, futureCap = 99): number {
     const L = idx(letter);
     const rand = rng(seed * 2654435761 + total(v.rack));
-    const m = Math.min(this.p.maxFuture, Math.round(v.bagLeft * this.p.futureShare));
+    const m = Math.min(this.p.maxFuture, Math.round(v.bagLeft * this.p.futureShare), futureCap);
     const pool: number[] = [];
     for (let i = 0; i < 26; i++) for (let k = 0; k < v.unseen[i]!; k++) pool.push(i);
     const r = Int8Array.from(v.rack);
@@ -196,7 +200,14 @@ export class Brain {
   decideBid(v: View, letter: string, seed = 1): number {
     // The last auctioned tile closes the match: nobody can ever play it.
     if (v.bagLeft === 0) return 0;
-    const val = this.marginal(v, letter, seed);
+    let val = this.marginal(v, letter, seed);
+    if (this.p.budgetAware && v.marketPaid && v.bagLeft > 0) {
+      // After paying ~this much, how many more tiles could we still buy?
+      const spend = Math.min(v.balance, val * this.paceMult(v));
+      const affordable = Math.max(0, Math.floor((v.balance - spend) / v.marketPaid) + 1);
+      const m = Math.min(this.p.maxFuture, Math.round(v.bagLeft * this.p.futureShare));
+      if (affordable < m) val = Math.min(val, this.marginal(v, letter, seed, affordable));
+    }
     const floor =
       this.p.endgameAt > 0 && v.bagLeft <= this.p.endgameAt
         ? Math.floor(v.balance / Math.max(1, (v.bagLeft + 1) * this.p.endShare))
@@ -214,7 +225,7 @@ export class Brain {
       bid = Math.min(bid * 0.75, mk + 1.5);
     }
     let b = Math.floor(Math.min(bid, v.balance * cap + 1));
-    if (this.p.denial > 0 && v.rivals?.length) {
+    if (this.p.denial > 0 && v.rivals?.length && v.bagLeft <= this.p.denyAt) {
       const d = this.denialBid(v, letter, seed);
       b = Math.max(b, Math.floor(Math.min(d, v.balance * cap + 1)));
     }
