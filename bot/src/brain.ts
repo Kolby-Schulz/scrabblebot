@@ -23,7 +23,6 @@ export interface Params {
   liqMarket: number; // ...or below liqMarket * market price (0 = off)
   liqMinLen: number; // shortest word allowed when cash-starved
   clogSize: number; // rack size at which we cash in a word anyway
-  denial: number; // weight on value of tile to the leader (anti-leader bids)
   // Budget pacing: mult *= clamp((affordable / marketPrice)^paceGamma).
   // affordable = balance / (tiles we still expect to buy). 0 disables.
   paceGamma: number;
@@ -35,6 +34,13 @@ export interface Params {
   // (pure denial). Coins are worthless once the bag empties. 0 disables.
   endgameAt: number;
   endShare: number;
+  // Denial / price-push: bid up to denial * min(rival balance, rivalMult *
+  // tile's value to that rival). If they outbid us, they pay our bid; if not,
+  // we've blocked their word. Only vs rivals within threatMargin of us or ahead.
+  denial: number;
+  rivalMult: number;
+  threatMargin: number;
+  rivalSamples: number;
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -48,13 +54,16 @@ export const DEFAULT_PARAMS: Params = {
   liqMarket: 0,
   liqMinLen: 5,
   clogSize: 12,
-  denial: 0,
   paceGamma: 0.5, // adaptive budget pacing (big win vs every field tested)
   paceShare: 0.25,
   paceLo: 0.6,
   paceHi: 1.8,
   endgameAt: 6, // +4pts win% in self-play (end6/10/15 all 18-19% vs 14%)
   endShare: 0.5,
+  denial: 0,
+  rivalMult: 2.0,
+  threatMargin: 25,
+  rivalSamples: 6,
 };
 
 export interface View {
@@ -66,6 +75,20 @@ export interface View {
   firstPrice: boolean;
   lastPaid?: number[]; // recent prices paid for this letter (market)
   marketPaid?: number; // mean price paid over recent sold auctions (any letter)
+  myScore?: number;
+  rivals?: Rival[];
+}
+
+/**
+ * What we can see of an opponent. Every auction winner and every played word
+ * is public, so a rival's rack = letters they won - letters they played, plus
+ * `hidden` starting tiles we haven't seen yet (5 minus those revealed in words).
+ */
+export interface Rival {
+  known: Counts;
+  hidden: number;
+  score: number;
+  balance: number;
 }
 
 // Small deterministic RNG so valuations are stable between re-bids.
@@ -127,6 +150,49 @@ export class Brain {
     return base * Math.max(this.p.paceLo, Math.min(this.p.paceHi, f));
   }
 
+  /** Expected gain to a rival from `letter`, sampling their hidden tiles. */
+  rivalValue(v: View, r: Rival, letter: string, seed: number): number {
+    const L = idx(letter);
+    const rand = rng(seed * 40503 + r.score * 7 + total(r.known));
+    const pool: number[] = [];
+    for (let i = 0; i < 26; i++) for (let k = 0; k < v.unseen[i]!; k++) pool.push(i);
+    const rack = Int8Array.from(r.known);
+    const n = r.hidden > 0 ? this.p.rivalSamples : 1;
+    let sum = 0;
+    for (let s = 0; s < n; s++) {
+      const picked: number[] = [];
+      for (let k = 0; k < r.hidden && pool.length; k++) {
+        const j = Math.floor(rand() * pool.length);
+        picked.push(pool[j]!);
+        [pool[j], pool[pool.length - 1]] = [pool[pool.length - 1]!, pool[j]!];
+        pool.pop();
+      }
+      for (const t of picked) rack[t]!++;
+      const without = this.lex.best(rack).score;
+      rack[L]!++;
+      sum += this.lex.best(rack).score - without;
+      rack[L]!--;
+      for (const t of picked) rack[t]!--;
+      pool.push(...picked);
+    }
+    return sum / n;
+  }
+
+  /** Bid that blocks (or taxes) the most dangerous rival for this tile. */
+  denialBid(v: View, letter: string, seed: number): number {
+    let best = 0;
+    const mine = v.myScore ?? 0;
+    for (const r of v.rivals ?? []) {
+      if (r.score + this.p.threatMargin < mine) continue; // not a threat
+      if (r.balance <= 0) continue;
+      const val = this.rivalValue(v, r, letter, seed);
+      if (val <= 0) continue;
+      const theirBid = Math.min(r.balance, val * this.p.rivalMult);
+      best = Math.max(best, theirBid * this.p.denial);
+    }
+    return best;
+  }
+
   decideBid(v: View, letter: string, seed = 1): number {
     // The last auctioned tile closes the match: nobody can ever play it.
     if (v.bagLeft === 0) return 0;
@@ -147,7 +213,11 @@ export class Brain {
         : LETTER_VALUE[idx(letter)]! + 2;
       bid = Math.min(bid * 0.75, mk + 1.5);
     }
-    const b = Math.floor(Math.min(bid, v.balance * cap + 1));
+    let b = Math.floor(Math.min(bid, v.balance * cap + 1));
+    if (this.p.denial > 0 && v.rivals?.length) {
+      const d = this.denialBid(v, letter, seed);
+      b = Math.max(b, Math.floor(Math.min(d, v.balance * cap + 1)));
+    }
     return Math.max(0, Math.min(v.balance, Math.max(b, floor)));
   }
 

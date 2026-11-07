@@ -18,6 +18,8 @@ interface Seat {
   bal: number;
   score: number;
   unseen: Counts;
+  won: Counts; // public: auction letters won
+  played: Counts; // public: letters in played words
 }
 
 function longestPlayable(rack: Counts, minLen: number): string | undefined {
@@ -40,6 +42,7 @@ function play(s: Seat, w: string) {
   const sc = scoreOf(w);
   s.bal += sc;
   s.score += sc;
+  for (let i = 0; i < 26; i++) s.played[i]! += c[i]!;
 }
 import { wordScore as scoreOf } from "./engine.js";
 
@@ -63,7 +66,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
     return -1;
   };
   const seats: Seat[] = kinds.map((kind) => ({
-    kind, rack: new Int8Array(26), bal: 100, score: 0, unseen: freshUnseen(),
+    kind, rack: new Int8Array(26), bal: 100, score: 0, unseen: freshUnseen(), won: new Int8Array(26), played: new Int8Array(26),
   }));
   for (const s of seats)
     for (let k = 0; k < 5; k++) {
@@ -82,7 +85,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
     for (const s of seats) {
       s.unseen[L]!--;
       if (s.kind.t === "Brain") {
-        const v = view(s, bagLeft, seats.length, firstPrice, market());
+        const v = view(s, bagLeft, seats, firstPrice, market());
         for (const w of s.kind.brain.decideWords(v, bagLeft === 0)) play(s, w);
       }
     }
@@ -97,7 +100,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
         case "ValueBidder": amt = Math.max(val + jit, 1); break;
         case "Aggressive": amt = Math.max(val + ("AEIOU".includes(letter) ? 4 : 2) + jit, 1); break;
         case "Starter": amt = s.rack[L]! === 0 ? val + 2 : Math.max(1, val); break;
-        case "Brain": amt = s.kind.brain.decideBid(view(s, bagLeft, seats.length, firstPrice, market()), letter, seed++); break;
+        case "Brain": amt = s.kind.brain.decideBid(view(s, bagLeft, seats, firstPrice, market()), letter, seed++); break;
       }
       amt = Math.min(amt, s.bal);
       if (amt > 0) bids.push({ i, amt });
@@ -110,6 +113,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
         w.bal -= paid;
         paids.push(paid);
         w.rack[L]!++;
+        w.won[L]!++;
         const t = w.kind.t;
         if (t === "Cheapskate" || t === "ValueBidder" || t === "Aggressive") {
           const word = longestPlayable(w.rack, 3);
@@ -127,8 +131,24 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
   return seats.map((s) => s.score);
 }
 
-function view(s: Seat, bagLeft: number, players: number, firstPrice: boolean, marketPaid?: number) {
-  return { rack: s.rack, balance: s.bal, bagLeft, players, unseen: s.unseen, firstPrice, marketPaid };
+function view(s: Seat, bagLeft: number, seats: Seat[], firstPrice: boolean, marketPaid?: number) {
+  // Only what a live bot could see: each rival's won and played letters.
+  const rivals = seats
+    .filter((o) => o !== s)
+    .map((o) => {
+      const known = new Int8Array(26);
+      let revealed = 0;
+      for (let i = 0; i < 26; i++) {
+        const d = o.won[i]! - o.played[i]!;
+        if (d > 0) known[i] = d;
+        else revealed -= d;
+      }
+      return { known, hidden: Math.max(0, 5 - revealed), score: o.score, balance: o.bal };
+    });
+  return {
+    rack: s.rack, balance: s.bal, bagLeft, players: seats.length, unseen: s.unseen,
+    firstPrice, marketPaid, myScore: s.score, rivals,
+  };
 }
 
 // ---- CLI: our brain vs a field ----

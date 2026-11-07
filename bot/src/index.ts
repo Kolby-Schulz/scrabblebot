@@ -29,7 +29,7 @@ import { Identity } from "spacetimedb";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { LETTER_VALUE, Lexicon, countsFromMap, idx } from "./engine.js";
-import { Brain, DEFAULT_PARAMS, freshUnseen, type View } from "./brain.js";
+import { Brain, DEFAULT_PARAMS, freshUnseen, type Rival, type View } from "./brain.js";
 
 const HOST = process.env.STDB_HOST ?? "https://maincloud.spacetimedb.com";
 const DB_NAME = process.env.STDB_DB ?? "scrabblebot";
@@ -96,8 +96,17 @@ function buildView(conn: DbConnection, matchId: bigint): View | null {
   const lastPaid = new Map<string, number[]>();
   for (const a of conn.db.auction.iter()) if (a.matchId === matchId) unseen[idx(a.letter)]!--;
   const sold: { id: bigint; paid: number }[] = [];
+  // Public history per rival: letters won at auction, letters played.
+  const won = new Map<bigint, Int8Array>();
+  const played = new Map<bigint, Int8Array>();
+  const get = (m: Map<bigint, Int8Array>, b: bigint) => {
+    let c = m.get(b);
+    if (!c) m.set(b, (c = new Int8Array(26)));
+    return c;
+  };
   for (const r of conn.db.auctionResult.iter()) {
     if (r.matchId !== matchId) continue;
+    if (r.winnerBotId != null && r.winnerBotId !== myBotId) get(won, r.winnerBotId)[idx(r.letter)]!++;
     if (r.winnerBotId != null) sold.push({ id: r.auctionId, paid: Number(r.paid) });
     if (r.winnerBotId === myBotId) start[idx(r.letter)]!--;
     if (r.winnerBotId != null) {
@@ -107,8 +116,29 @@ function buildView(conn: DbConnection, matchId: bigint): View | null {
     }
   }
   for (const w of conn.db.wordPlay.iter()) {
-    if (w.matchId !== matchId || w.botId !== myBotId) continue;
-    for (const c of w.word) start[idx(c)]!++;
+    if (w.matchId !== matchId) continue;
+    if (w.botId === myBotId) for (const c of w.word) start[idx(c)]!++;
+    else for (const c of w.word) get(played, w.botId)[idx(c)]!++;
+  }
+  const rivals: Rival[] = [];
+  for (const p of conn.db.matchParticipant.iter()) {
+    if (p.matchId !== matchId || p.botId === myBotId) continue;
+    const w = won.get(p.botId) ?? new Int8Array(26);
+    const pl = played.get(p.botId) ?? new Int8Array(26);
+    const known = new Int8Array(26);
+    let revealed = 0;
+    for (let i = 0; i < 26; i++) {
+      const d = w[i]! - pl[i]!;
+      if (d > 0) known[i] = d;
+      else if (d < 0) {
+        revealed -= d;
+        unseen[i] = Math.max(0, unseen[i]! + d); // their starting tiles, now seen
+      }
+    }
+    rivals.push({
+      known, hidden: Math.max(0, m.startingRackSize - revealed),
+      score: Number(p.score), balance: Number(p.balance),
+    });
   }
   for (let i = 0; i < 26; i++) unseen[i] = Math.max(0, unseen[i]! - Math.max(0, start[i]!));
   let players = 0;
@@ -118,6 +148,8 @@ function buildView(conn: DbConnection, matchId: bigint): View | null {
     firstPrice: m.auctionType.tag === "FirstPrice",
     lastPaid: undefined,
     marketPaid: recentMean(sold),
+    myScore: me.score,
+    rivals,
     ...{ _paid: lastPaid },
   } as View;
 }
