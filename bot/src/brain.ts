@@ -28,7 +28,7 @@ export const DEFAULT_PARAMS: Params = {
   mcSamples: 24,
   futureShare: 0.3,
   maxFuture: 5,
-  bidMult: 1.0,
+  bidMult: 2.5, // tuned: ~Nash in self-play; 1.0 loses to everyone
   capEarly: 0.35,
   minPlayLen: 7,
   liquidityFloor: 6,
