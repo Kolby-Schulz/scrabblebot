@@ -1,23 +1,13 @@
-// ScrabbleBot bot starter.
+// LexiconWarrior live client.
 //
-// First run, with a token from the website:
-//   On your team's page, click "Generate token", then run
-//   `BOT_NAME=<name> BOT_TOKEN=<token> npm start`.
+//   BOT_NAME=<name> BOT_TOKEN=<token> npm start   first run (saves .token-<name>)
+//   BOT_NAME=<name> npm start                     later runs
+//   BOT_NAME=<name> TOURNAMENT_ID=<id> npm start  register for a tournament
+//   npm run pause                                 finish current match, then stay out
 //
-// Or with a nonce from the CLI:
-//   1. `spacetime call scrabblebot mint_credential_nonce`
-//      `spacetime sql 'SELECT code FROM my_nonces ORDER BY expires_at DESC'`
-//   2. `BOT_NAME=<name> BOT_NONCE=<code> npm start`
-//      The bot connects fresh and redeems the nonce.
-//
-// Either way the bot saves its token to .token-<BOT_NAME>, so later runs
-// need only `BOT_NAME=<name> npm start`.
-//
-// Entering a tournament: `BOT_NAME=<name> TOURNAMENT_ID=<id> npm start`
-// registers the bot for that tournament when it connects. Only the bot
-// itself can register, so this has to come from the bot's process.
-//
-// Edit ./src/strategy.ts to customise how your bot bids and plays words.
+// Strategy lives in brain.ts; this file only wires it to SpacetimeDB: per-match
+// subscriptions, bids, word plays and match logs (logs/matches.jsonl).
+// Started from clockworklabs/scrabblebot bot-starter (MIT); see THIRD_PARTY_NOTICES.md.
 
 import {
   DbConnection,
