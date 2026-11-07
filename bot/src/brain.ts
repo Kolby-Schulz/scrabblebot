@@ -28,6 +28,11 @@ export interface Params {
   paceShare: number; // share of remaining auctions we aim to win
   paceLo: number;
   paceHi: number;
+  // Endgame spend-down: in the last `endgameAt` auctions, bid at least
+  // balance / (endShare * auctions left), even for tiles we can't use
+  // (pure denial). Coins are worthless once the bag empties. 0 disables.
+  endgameAt: number;
+  endShare: number;
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -44,6 +49,8 @@ export const DEFAULT_PARAMS: Params = {
   paceShare: 0.25,
   paceLo: 0.6,
   paceHi: 1.8,
+  endgameAt: 6, // +4pts win% in self-play (end6/10/15 all 18-19% vs 14%)
+  endShare: 0.5,
 };
 
 export interface View {
@@ -120,7 +127,11 @@ export class Brain {
     // The last auctioned tile closes the match: nobody can ever play it.
     if (v.bagLeft === 0) return 0;
     const val = this.marginal(v, letter, seed);
-    if (val <= 0.25) return v.balance > 30 ? 1 : 0; // cheap lottery ticket
+    const floor =
+      this.p.endgameAt > 0 && v.bagLeft <= this.p.endgameAt
+        ? Math.floor(v.balance / Math.max(1, (v.bagLeft + 1) * this.p.endShare))
+        : 0;
+    if (val <= 0.25) return Math.min(v.balance, Math.max(floor, v.balance > 30 ? 1 : 0));
     // Coins have no end value, so the cap loosens to 100% as the bag drains.
     const progress = 1 - v.bagLeft / 68;
     const cap = this.p.capEarly + (1 - this.p.capEarly) * Math.max(0, Math.min(1, progress));
@@ -132,7 +143,8 @@ export class Brain {
         : LETTER_VALUE[idx(letter)]! + 2;
       bid = Math.min(bid * 0.75, mk + 1.5);
     }
-    return Math.max(0, Math.min(v.balance, Math.floor(Math.min(bid, v.balance * cap + 1))));
+    const b = Math.floor(Math.min(bid, v.balance * cap + 1));
+    return Math.max(0, Math.min(v.balance, Math.max(b, floor)));
   }
 
   /**

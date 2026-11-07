@@ -63,3 +63,13 @@ Win % in self-play (even share = 17%; 80–100 matches each):
 
 @3x trades a little against weak fields for more against strong ones, where the prize is decided.
 The live log prints the current multiplier and market price on every bid (`x2.81, mkt 7.4`).
+
+## Live results (LexiconWarrior, bot id 181)
+| Match | Field | Our score | Next best | Result |
+|---|---|---|---|---|
+| 42746 | 5 real bots incl. Bron | 84 | 82 (GodOfThudner) | **Won** +2 |
+| 42748 | same 5 | 122 | 93 (Bron) | **Won** +29 |
+
+Live fixes: per-match subscriptions (subscribeToAllTables OOMs: `auction` holds every match ever);
+instant fallback bid; endgame spend-down over the last 6 auctions (match 1 left ~38 coins unspent).
+Real-bot lobbies are expensive (market ~12–16 coins/tile vs ~5 vs sims), and pacing drops to ~1.8–2.1x.
