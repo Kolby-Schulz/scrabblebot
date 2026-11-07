@@ -1,75 +1,107 @@
-# Ruthless ScrabbleBot (HackUTD / SpacetimeDB)
+# LexiconWarrior
 
-## Run it
+A competitive bot for **[ScrabbleBot](https://scrabblebot.spacetimedb.com)**, the SpacetimeDB
+challenge at HackUTD. Each round, a letter is sold in a 1-second sealed-bid auction. Bots
+spell dictionary words from the letters they've bought, and the highest score when the bag
+runs out wins.
+
+**Live record (all-real-bot lobbies): 27 matches, 9 wins, 22 top-3 finishes.**
+
+| | |
+|---|---|
+| How the bot thinks | [docs/STRATEGY.md](docs/STRATEGY.md) |
+| Every experiment and live result | [docs/RESULTS.md](docs/RESULTS.md) |
+| Tournament-day checklist | [docs/TOURNAMENT.md](docs/TOURNAMENT.md) |
+
+## Quickstart
+
+Requires Node 20+ (see `.nvmrc`).
+
 ```bash
-cd bot && npm install
-BOT_NAME=<name> BOT_TOKEN=<token from scrabblebot.spacetimedb.com/team> npm start
-# tournament:
-BOT_NAME=<name> TOURNAMENT_ID=<id> npm start
-# offline tuning: matches, variants, field ("sims"|"self"), field params
-npm run sim -- 50 '{"a":{"bidMult":2.5},"b":{"bidMult":3}}' self '{"bidMult":2.5}'
+cd bot
+npm install
+BOT_NAME=ruthless BOT_TOKEN=<token from scrabblebot.spacetimedb.com/team> npm start
 ```
-Override live params without code changes: `BOT_PARAMS='{"bidMult":2.8}' npm start`.
 
-## Where the edge comes from (read from the server source, `upstream/spacetimedb/src/game.ts`)
-1. **Coins are not score.** Spending never lowers your score; leftover coins are worth 0.
-   Most bots bid "face value" and hoard. We bid ~2.5x the tile's computed marginal value.
-2. **7+ letters = 3x.** We hold tiles until a 7-letter word appears (relaxed when cash is low,
-   rack is clogged, or the bag is nearly empty), instead of dumping 3-letter words.
-3. **Exact endgame.** When the last auction opens (`bagTotal == 0`) we play the *optimal
-   partition* of the rack into words. Tiles held at the end are worth 0.
-4. **Last tile is worthless.** The match ends when the final auction closes, so we bid 0 on it.
-5. **Real valuation.** Monte Carlo over the unseen-tile pool (bag minus every auctioned letter
-   minus our start rack): E[score with tile] - E[score without], via an anagram trie (~ms).
-6. **Sims are fully predictable:** they bid face value -1/+0/+2..4 with ±2 jitter and play the
-   *longest* word >=3 immediately, which is exactly what this bot exploits.
+The first run saves the token to `bot/.token-<BOT_NAME>` (gitignored). After that:
 
-## Sim results (bot/src/sim.ts mirrors the server rules)
-| Field | Win % | Avg score |
-|---|---|---|
-| 5 server sim bots + starter bot | 100% | ~330 (live leaders score ~135-170) |
-| 5 copies of itself at 2.5x | ~20% (fair share is 17%) | near-equilibrium |
-| bidding 1.0x vs 1.4x field | 23% | under-bidding is the classic mistake |
+```bash
+cd bot && BOT_NAME=ruthless npm start
+```
 
-## Next levers if rivals adapt
-- Read rivals' `paid` prices live and shift `bidMult` toward the observed equilibrium.
-- First-price matches: shading logic exists but is untuned.
-- Denial bids on Q/Z/X/J against the current score leader (`denial` param, unused).
+> **Only one copy of the bot may run at a time.** Two processes using the same bot
+> identity send conflicting bids and words. Agree on whose machine runs it.
 
-## Tuning round 2 (self-play, 80–150 matches per variant)
-- `minPlayLen` 7 is clearly right: 6 → 0% wins, 8 → 10% (even share is 17%).
-- `bidMult` 2.5 holds: 2.2–2.8 are all no better.
-- `capEarly` 0.35 → **0.5** (slightly higher avg score, no extra latency).
-- More MC samples / a larger future horizon: no significant gain, up to 15× slower, not adopted.
-- Conclusion: parameters are on a plateau. Further gains need new behavior (adaptive bidding
-  from observed rival prices, denial bids), not more knob-turning.
+## Commands
 
-## Adaptive bidding (round 3) — now the default
-Budget pacing: `mult = bidMult * clamp((affordable / marketPrice)^0.5, 0.6, 1.8)`, where
-affordable = balance / (25% of remaining auctions) and marketPrice = mean `paid` over the last 12
-sold auctions (public `auction_result`). Flush vs. the market → bid harder; short → pull back.
-Coins are worthless at the end, so this steers toward spending the whole budget.
+All of these run from `bot/`.
 
-Win % in self-play (even share = 17%; 80–100 matches each):
+| Command | What it does |
+|---|---|
+| `npm start` | Play live: join the lobby, play every match, rejoin after each. |
+| `npm run pause` | Finish the match in progress, then stay out of the lobby. |
+| `TOURNAMENT_ID=<id> npm start` | Register for a tournament and play it. |
+| `npm run sim -- <N> '<variants>' <field> '<fieldParams>'` | Offline simulator (see below). |
+| `npm run typecheck` | Type-check everything. |
 
-| Opponents (5 seats) | Fixed 2.5x (old) | Pacing @2.5x | **Pacing @3x (default)** |
-|---|---|---|---|
-| fixed 1.5x bidders | 59% | 93% | 83% |
-| fixed 2.5x bidders | 16% | 30% | 39% |
-| fixed 3.5x bidders | 70% | 89% | 84% |
-| pacing @2.5x bidders | — | 15% | 24% |
-| pacing @3x bidders | — | 13% | 26% |
-| server sim bots | 330 avg | 350 avg | — |
+Environment variables:
 
-@3x trades a little against weak fields for more against strong ones, where the prize is decided.
-The live log prints the current multiplier and market price on every bid (`x2.81, mkt 7.4`).
+| Variable | Meaning |
+|---|---|
+| `BOT_NAME` | Local name; picks which `.token-<name>` file to use. |
+| `BOT_TOKEN` | Token from the team page (first run only). |
+| `TOURNAMENT_ID` | Register for this tournament on connect. |
+| `NO_REJOIN=1` | Don't join the lobby (what `npm run pause` sets). |
+| `BOT_PARAMS` | JSON overrides for strategy params, e.g. `'{"bidMult":2.8}'`. |
 
-## Live results (LexiconWarrior, bot id 181)
-| Match | Field | Our score | Next best | Result |
-|---|---|---|---|---|
-| 42746 | 5 real bots incl. Bron | 84 | 82 (GodOfThudner) | **Won** +2 |
-| 42748 | same 5 | 122 | 93 (Bron) | **Won** +29 |
+### Simulator
 
-Live fixes: per-match subscriptions (subscribeToAllTables OOMs: `auction` holds every match ever);
-instant fallback bid; endgame spend-down over the last 6 auctions (match 1 left ~38 coins unspent).
-Real-bot lobbies are expensive (market ~12–16 coins/tile vs ~5 vs sims), and pacing drops to ~1.8–2.1x.
+`bot/src/sim.ts` copies the server's rules (`game.ts`) and pits strategy variants against
+an opponent field:
+
+```bash
+# 150 matches each: current defaults vs a variant, in a mixed lobby
+npm run sim -- 150 '{"base":{},"bid2.5":{"bidMult":2.5}}' mixed '{}'
+```
+
+| Field | Opponents |
+|---|---|
+| `sims` | The server's simulated bots plus the starter bot. |
+| `self` | 5 copies of our bot (params from the last argument). |
+| `mixed` | 2 copies of our bot, the starter bot, 2 sims. |
+
+An even share is 17% wins in `self` and 33% in `mixed` (3 copies of our bot).
+
+## Repository layout
+
+```
+bot/
+  src/
+    engine.ts          word engine: anagram trie, best word, optimal rack partition
+    brain.ts           strategy: tile valuation, bidding, word timing, rival model
+    index.ts           live client: subscriptions, bids, words, match logs
+    sim.ts             offline match simulator
+    module_bindings/   generated SpacetimeDB client bindings (do not edit)
+  wordlist.txt         the server's dictionary (172k words)
+  logs/                per-match JSONL logs from live play (gitignored)
+docs/                  strategy, results, tournament checklist
+```
+
+`upstream/` (gitignored) is an optional local clone of
+[clockworklabs/scrabblebot](https://github.com/clockworklabs/scrabblebot), the server source.
+You only need it to regenerate bindings (`npm run generate`).
+
+## Working on it
+
+- Branch from `main`, open a PR, and include sim numbers for any strategy change (at least
+  150 matches; anything under about ±5 win-% is noise).
+- New strategy ideas go in as params in `brain.ts`, **off by default**, and get turned on
+  only after they beat the current defaults in the simulator. Then check them live.
+- Restart the live bot between matches, not during one. Use `npm run pause`, wait for
+  `placed N/6`, then restart.
+
+## Credits
+
+The live client began as the starter kit from
+[clockworklabs/scrabblebot](https://github.com/clockworklabs/scrabblebot). The bindings
+and word list come from that repo too. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
