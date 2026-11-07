@@ -21,6 +21,7 @@
 
 import {
   DbConnection,
+  tables,
   type EventContext,
   type ErrorContext,
 } from "./module_bindings/index.js";
@@ -211,7 +212,7 @@ function onConnect(conn: DbConnection, identity: Identity, token: string) {
             console.log(
               `[${BOT_NAME}] claimed credential for bot '${bot?.name ?? "?"}' (id ${myBotId})`,
             );
-            bootstrapActivity(conn);
+            subscribeMine(conn);
           }, 1000);
           return;
         } else {
@@ -226,10 +227,22 @@ function onConnect(conn: DbConnection, identity: Identity, token: string) {
       console.log(
         `[${BOT_NAME}] acting as bot '${bot?.name ?? "?"}' (id ${myBotId})`,
       );
-      bootstrapActivity(conn);
+      subscribeMine(conn);
     })
-    .subscribeToAllTables();
+    // NOT subscribeToAllTables: `auction`, `word_play` etc. hold every match
+    // ever played (millions of rows) and blow the heap. Start small, then
+    // subscribe per match (see watchMatch).
+    .subscribe([
+      tables.bot,
+      tables.botCredential,
+      tables.openLobbies,
+      tables.openLobbyMembers,
+      tables.myRack,
+    ]);
 
+  conn.db.matchParticipant.onInsert((_c, p) => {
+    if (myBotId !== null && p.botId === myBotId) watchMatch(conn, p.matchId);
+  });
   conn.db.auction.onInsert((_ctx: EventContext, a) => {
     if (a.status.tag === "Open") tryBid(conn, a.id, a.matchId, a.letter);
   });
@@ -260,8 +273,11 @@ function onConnect(conn: DbConnection, identity: Identity, token: string) {
         (p) => p.matchId === neu.id && p.botId === myBotId,
       );
       if (wasIn) {
-        console.log(`[${BOT_NAME}] match ${neu.id} ended; rejoining lobby`);
+        const me = participantForMatch(conn, neu.id);
+        console.log(`[${BOT_NAME}] match ${neu.id} ended (score ${me?.score ?? "?"}); rejoining lobby`);
         joinLobby(conn);
+        // Free that match's rows a bit later.
+        setTimeout(() => unwatchMatch(neu.id), 5000);
       }
     }
   });
@@ -275,17 +291,61 @@ function joinLobby(conn: DbConnection) {
     return m?.status.tag === "Running";
   });
   if (inRunning) return;
-  const openLobby = Array.from(conn.db.lobby.iter()).find(
-    (l) => l.status.tag === "Open",
+  const alreadyIn = Array.from(conn.db.openLobbyMembers.iter()).some(
+    (lm) => lm.botId === myBotId,
   );
-  const alreadyIn =
-    openLobby !== undefined &&
-    Array.from(conn.db.lobbyMember.iter()).some(
-      (lm) => lm.lobbyId === openLobby.id && lm.botId === myBotId,
-    );
   if (alreadyIn) return;
   console.log(`[${BOT_NAME}] joining lobby`);
   conn.reducers.joinLobby({}).catch(logFailure("joining the lobby"));
+}
+
+// Our own participant rows (small), then the latest match in detail.
+function subscribeMine(conn: DbConnection) {
+  const botId = myBotId!;
+  conn
+    .subscriptionBuilder()
+    .onApplied(() => {
+      let latest: bigint | null = null;
+      for (const p of conn.db.matchParticipant.iter())
+        if (p.botId === botId && (latest === null || p.matchId > latest)) latest = p.matchId;
+      if (latest !== null) watchMatch(conn, latest, () => bootstrapActivity(conn));
+      else bootstrapActivity(conn);
+    })
+    .onError((ctx) => console.error(`[${BOT_NAME}] subscription error`, ctx.event))
+    .subscribe([tables.matchParticipant.where((r) => r.botId.eq(botId))]);
+}
+
+const watched = new Map<string, { unsubscribe(): void }>();
+function watchMatch(conn: DbConnection, matchId: bigint, then?: () => void) {
+  const key = String(matchId);
+  if (watched.has(key)) return then?.();
+  const handle = conn
+    .subscriptionBuilder()
+    .onApplied(() => {
+      console.log(`[${BOT_NAME}] watching match ${matchId}`);
+      if (then) then();
+      else {
+        for (const a of conn.db.auction.iter())
+          if (a.matchId === matchId && a.status.tag === "Open") tryBid(conn, a.id, a.matchId, a.letter);
+        tryPlayWord(conn);
+      }
+    })
+    .onError((ctx) => console.error(`[${BOT_NAME}] match ${matchId} subscription error`, ctx.event))
+    .subscribe([
+      tables.matchState.where((r) => r.id.eq(matchId)),
+      tables.matchParticipant.where((r) => r.matchId.eq(matchId)),
+      tables.auction.where((r) => r.matchId.eq(matchId)),
+      tables.auctionResult.where((r) => r.matchId.eq(matchId)),
+      tables.wordPlay.where((r) => r.matchId.eq(matchId)),
+    ]);
+  watched.set(key, handle);
+}
+function unwatchMatch(matchId: bigint) {
+  const key = String(matchId);
+  try {
+    watched.get(key)?.unsubscribe();
+  } catch {}
+  watched.delete(key);
 }
 
 function bootstrapActivity(conn: DbConnection) {
