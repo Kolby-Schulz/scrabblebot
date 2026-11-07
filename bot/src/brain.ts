@@ -41,6 +41,7 @@ export interface Params {
   rivalMult: number;
   threatMargin: number;
   rivalSamples: number;
+  hvTilt: number; // extra bid per point of face value (high-value letters triple in 7s)
   choiceAware: number; // >0: value = best word using rack + any k of (k*choiceAware) upcoming tiles
   budgetAware: number; // 1 = re-value with only the tiles we could afford after this bid
   denyAt: number; // only block when bagLeft <= denyAt (coins nearly worthless); 99 = always
@@ -70,6 +71,7 @@ export const DEFAULT_PARAMS: Params = {
   denyAt: 99,
   budgetAware: 1, // mixed field 44% vs 32% (200 matches)
   choiceAware: 0,
+  hvTilt: 0,
 };
 
 export interface View {
@@ -231,6 +233,8 @@ export class Brain {
     const progress = 1 - v.bagLeft / 68;
     const cap = this.p.capEarly + (1 - this.p.capEarly) * Math.max(0, Math.min(1, progress));
     let bid = val * this.paceMult(v);
+    // Tilt toward high-value letters, but only ones that fit our rack (val > 0).
+    if (this.p.hvTilt > 0 && val > 0.5) bid += this.p.hvTilt * LETTER_VALUE[idx(letter)]!;
     if (v.firstPrice) {
       // shade toward the market price for this letter
       const mk = v.lastPaid?.length
