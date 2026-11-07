@@ -68,7 +68,7 @@ export const DEFAULT_PARAMS: Params = {
   threatMargin: 25,
   rivalSamples: 6,
   denyAt: 99,
-  budgetAware: 0,
+  budgetAware: 1, // mixed field 44% vs 32% (200 matches)
   choiceAware: 0,
 };
 
