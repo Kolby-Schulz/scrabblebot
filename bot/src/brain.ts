@@ -41,6 +41,12 @@ export interface Params {
   rivalMult: number;
   threatMargin: number;
   rivalSamples: number;
+  // Starvation guard: when the rack is too small for a minPlayLen word and we
+  // have coins, bid at least needFloor * market price on any useful tile.
+  // Live match 42809: 24 straight auctions lost while holding 76 coins.
+  needFloor: number;
+  fpShade: number; // first-price: fraction of value to bid
+  fpOver: number; // first-price: max coins above the letter's market price
   hvTilt: number; // extra bid per point of face value (high-value letters triple in 7s)
   choiceAware: number; // >0: value = best word using rack + any k of (k*choiceAware) upcoming tiles
   budgetAware: number; // 1 = re-value with only the tiles we could afford after this bid
@@ -72,6 +78,9 @@ export const DEFAULT_PARAMS: Params = {
   budgetAware: 1, // mixed field 44% vs 32% (200 matches)
   choiceAware: 0,
   hvTilt: 0,
+  needFloor: 0.8, // mixed 36% vs 33%, avg +2.7; fixes live starvation (42809)
+  fpShade: 0.7, // first-price sweep: 0.7-0.75 with +5 best
+  fpOver: 5, // +1.5 lost most auctions (48%); +5 ~70% vs tuned copies
 };
 
 export interface View {
@@ -237,10 +246,16 @@ export class Brain {
     if (this.p.hvTilt > 0 && val > 0.5) bid += this.p.hvTilt * LETTER_VALUE[idx(letter)]!;
     if (v.firstPrice) {
       // shade toward the market price for this letter
+      // First-price: we pay our own bid, so shade below value and don't
+      // overshoot what this letter (or, failing that, any letter) sells for.
       const mk = v.lastPaid?.length
         ? v.lastPaid.reduce((a, b) => a + b, 0) / v.lastPaid.length
-        : LETTER_VALUE[idx(letter)]! + 2;
-      bid = Math.min(bid * 0.75, mk + 1.5);
+        : v.marketPaid ?? LETTER_VALUE[idx(letter)]! + 2;
+      bid = Math.min(bid * this.p.fpShade, mk + this.p.fpOver);
+    }
+    if (this.p.needFloor > 0 && v.marketPaid && val > 0.5 &&
+        total(v.rack) < this.p.minPlayLen && v.balance > 2 * v.marketPaid) {
+      bid = Math.max(bid, this.p.needFloor * v.marketPaid);
     }
     let b = Math.floor(Math.min(bid, v.balance * cap + 1));
     if (this.p.denial > 0 && v.rivals?.length && v.bagLeft <= this.p.denyAt) {
