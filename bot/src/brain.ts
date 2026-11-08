@@ -97,7 +97,7 @@ export const DEFAULT_PARAMS: Params = {
   fpShade: 0.7, // first-price sweep: 0.7-0.75 with +5 best
   fpOver: 5, // +1.5 lost most auctions (48%); +5 ~70% vs tuned copies
   bidBump: 1, // self-play: top3 58% vs 47%, last 9% vs 18%, place 3.13 vs 3.58; hot 48% vs 46% (+2 hurts hot: 40%)
-  scaleShares: 0,
+  scaleShares: 1, // only changes 2-3 bot tables (finals): duel 69% vs 54% (+23 avg), trio 42% vs 33%
 };
 
 export interface View {
