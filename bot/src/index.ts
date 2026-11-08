@@ -199,8 +199,12 @@ function tryPlayWord(conn: DbConnection) {
     Promise.allSettled(
       words.map((word) => conn.reducers.submitWord({ matchId, word }).catch(logFailure(`playing '${word}'`))),
     ).then(() => {
-      wordBusy.delete(key);
-      if (final) tryPlayWord(conn);
+      // The rack update can land just after the reducer resolves; wait a beat
+      // so we don't resubmit the same word from a stale rack.
+      setTimeout(() => {
+        wordBusy.delete(key);
+        tryPlayWord(conn);
+      }, 250);
     });
   }
 }
@@ -445,10 +449,17 @@ function main() {
     .withDatabaseName(DB_NAME)
     .withToken(BOT_TOKEN ?? loadToken())
     .onConnect(onConnect)
-    .onConnectError((_ctx: ErrorContext, err: Error) =>
-      console.error("connect error:", err.message),
-    )
-    .onDisconnect(() => console.log("disconnected"))
+    // Never sit idle while seated: a dropped bot loses every auction. Exit and
+    // let scripts/live.sh restart us; on reconnect we resume the running match
+    // and re-register for the tournament.
+    .onConnectError((_ctx: ErrorContext, err: Error) => {
+      console.error("connect error:", err.message);
+      setTimeout(() => process.exit(1), 1000);
+    })
+    .onDisconnect(() => {
+      console.log("disconnected; exiting so the wrapper reconnects");
+      setTimeout(() => process.exit(1), 500);
+    })
     .build();
 }
 
