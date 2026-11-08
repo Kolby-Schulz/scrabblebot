@@ -56,6 +56,14 @@ export interface Params {
   choiceAware: number; // >0: value = best word using rack + any k of (k*choiceAware) upcoming tiles
   budgetAware: number; // 1 = re-value with only the tiles we could afford after this bid
   denyAt: number; // only block when bagLeft <= denyAt (coins nearly worthless); 99 = always
+  // Add this many coins to any real bid. Vickrey: we still pay the runner-up,
+  // so this flips ties (shuffled randomly by the server) and 1-coin losses.
+  // Live: ~9 auctions/match end with the winner paying exactly our bid. 0 = off.
+  bidBump: number;
+  // Small tables (tournament elimination/final seat only survivors, no sims):
+  // expect at least a fair share 1/players of the tiles when pacing and
+  // valuing. Leaves 4+ player tables unchanged. 0 = off.
+  scaleShares: number;
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -88,6 +96,8 @@ export const DEFAULT_PARAMS: Params = {
   stallLen: 6,
   fpShade: 0.7, // first-price sweep: 0.7-0.75 with +5 best
   fpOver: 5, // +1.5 lost most auctions (48%); +5 ~70% vs tuned copies
+  bidBump: 1, // self-play: top3 58% vs 47%, last 9% vs 18%, place 3.13 vs 3.58; hot 48% vs 46% (+2 hurts hot: 40%)
+  scaleShares: 0,
 };
 
 export interface View {
@@ -132,11 +142,16 @@ export class Brain {
     readonly p: Params = DEFAULT_PARAMS,
   ) {}
 
+  private fair(v: View): number {
+    return this.p.scaleShares > 0 && v.players > 0 ? 1 / v.players : 0;
+  }
+
   /** Expected-score gain from adding `letter` to the rack. */
   marginal(v: View, letter: string, seed = 1, futureCap = 99): number {
     const L = idx(letter);
     const rand = rng(seed * 2654435761 + total(v.rack));
-    const m = Math.min(this.p.maxFuture, Math.round(v.bagLeft * this.p.futureShare), futureCap);
+    const fs = Math.max(this.p.futureShare, this.fair(v));
+    const m = Math.min(this.p.maxFuture, Math.round(v.bagLeft * fs), futureCap);
     const pool: number[] = [];
     for (let i = 0; i < 26; i++) for (let k = 0; k < v.unseen[i]!; k++) pool.push(i);
     const r = Int8Array.from(v.rack);
@@ -179,7 +194,7 @@ export class Brain {
   paceMult(v: View): number {
     const base = this.p.bidMult;
     if (!this.p.paceGamma || v.marketPaid === undefined) return base;
-    const expectBuys = Math.max(1, v.bagLeft * this.p.paceShare);
+    const expectBuys = Math.max(1, v.bagLeft * Math.max(this.p.paceShare, this.fair(v)));
     const affordable = v.balance / expectBuys;
     const ratio = affordable / Math.max(1, v.marketPaid);
     const f = Math.pow(ratio, this.p.paceGamma);
@@ -237,7 +252,7 @@ export class Brain {
       // After paying ~this much, how many more tiles could we still buy?
       const spend = Math.min(v.balance, val * this.paceMult(v));
       const affordable = Math.max(0, Math.floor((v.balance - spend) / v.marketPaid) + 1);
-      const m = Math.min(this.p.maxFuture, Math.round(v.bagLeft * this.p.futureShare));
+      const m = Math.min(this.p.maxFuture, Math.round(v.bagLeft * Math.max(this.p.futureShare, this.fair(v))));
       if (affordable < m) val = Math.min(val, this.marginal(v, letter, seed, affordable));
     }
     const floor =
@@ -272,6 +287,7 @@ export class Brain {
       const d = this.denialBid(v, letter, seed);
       b = Math.max(b, Math.floor(Math.min(d, v.balance * cap + 1)));
     }
+    if (this.p.bidBump > 0 && b > 1 && !v.firstPrice) b += this.p.bidBump;
     return Math.max(0, Math.min(v.balance, Math.max(b, floor)));
   }
 

@@ -82,6 +82,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
     }
   let seed = 1;
   const paids: number[] = [];
+  const winners: number[] = [];
   const market = () => (paids.length ? paids.slice(-12).reduce((a, b) => a + b, 0) / Math.min(12, paids.length) : undefined);
   while (bagTotal > 0) {
     const L = draw();
@@ -91,7 +92,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
     for (const s of seats) {
       s.unseen[L]!--;
       if (s.kind.t === "Brain" || s.kind.t === "Hot") {
-        const v = view(s, bagLeft, seats, firstPrice, market());
+        const v = view(s, bagLeft, seats, firstPrice, market(), winners);
         for (const w of s.kind.brain.decideWords(v, bagLeft === 0)) play(s, w);
       }
     }
@@ -107,7 +108,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
         case "Aggressive": amt = Math.max(val + ("AEIOU".includes(letter) ? 4 : 2) + jit, 1); break;
         case "Starter": amt = s.rack[L]! === 0 ? val + 2 : Math.max(1, val); break;
         case "Hot": amt = bagLeft === 0 ? 0 : Math.max(1, Math.round(HOT_BASE + HOT_K * val + (rnd(7) - 3))); break;
-        case "Brain": amt = s.kind.brain.decideBid(view(s, bagLeft, seats, firstPrice, market()), letter, seed++); break;
+        case "Brain": amt = s.kind.brain.decideBid(view(s, bagLeft, seats, firstPrice, market(), winners), letter, seed++); break;
       }
       amt = Math.min(amt, s.bal);
       if (amt > 0) bids.push({ i, amt });
@@ -119,6 +120,7 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
       if (w.bal >= paid) {
         w.bal -= paid;
         paids.push(paid);
+        winners.push(bids[0]!.i);
         w.rack[L]!++;
         w.won[L]!++;
         const t = w.kind.t;
@@ -138,7 +140,9 @@ export function runMatch(kinds: Kind[], firstPrice = false): number[] {
   return seats.map((s) => s.score);
 }
 
-function view(s: Seat, bagLeft: number, seats: Seat[], firstPrice: boolean, marketPaid?: number) {
+function view(s: Seat, bagLeft: number, seats: Seat[], firstPrice: boolean, marketPaid?: number, winners: number[] = []) {
+  const me = seats.indexOf(s);
+  const recent = winners.slice(-12);
   // Only what a live bot could see: each rival's won and played letters.
   const rivals = seats
     .filter((o) => o !== s)
@@ -155,6 +159,7 @@ function view(s: Seat, bagLeft: number, seats: Seat[], firstPrice: boolean, mark
   return {
     rack: s.rack, balance: s.bal, bagLeft, players: seats.length, unseen: s.unseen,
     firstPrice, marketPaid, myScore: s.score, rivals,
+    recentWon: recent.filter((w) => w === me).length, recentN: recent.length,
   };
 }
 
@@ -162,15 +167,19 @@ function view(s: Seat, bagLeft: number, seats: Seat[], firstPrice: boolean, mark
 if (process.argv[1]?.endsWith("sim.ts")) {
   const N = Number(process.argv[2] ?? 40);
   const variants: Record<string, Partial<Params>> = JSON.parse(process.argv[3] ?? '{"base":{}}');
-  const field = (process.argv[4] ?? "sims") as "sims" | "self" | "mixed" | "hot";
+  const field = (process.argv[4] ?? "sims") as "sims" | "self" | "mixed" | "hot" | "duel" | "trio";
   const fieldBrain = new Brain(lex, { ...DEFAULT_PARAMS, ...JSON.parse(process.argv[5] ?? "{}") });
   for (const [name, over] of Object.entries(variants)) {
     const brain = new Brain(lex, { ...DEFAULT_PARAMS, ...over });
-    let wins = 0, sum = 0, margin = 0;
+    let wins = 0, sum = 0, margin = 0, top3 = 0, last = 0, placeSum = 0;
     const t0 = Date.now();
     for (let m = 0; m < N; m++) {
       const opp: Kind[] =
-        field === "self"
+        field === "duel"
+          ? [{ t: "Brain", brain: fieldBrain, name: "d" } as Kind]
+          : field === "trio"
+          ? [{ t: "Brain", brain: fieldBrain, name: "d" } as Kind, { t: "Brain", brain: fieldBrain, name: "e" } as Kind]
+          : field === "self"
           ? Array.from({ length: 5 }, () => ({ t: "Brain", brain: fieldBrain, name: "def" }) as Kind)
           : field === "hot"
           ? [{ t: "Brain", brain: fieldBrain, name: "a" }, { t: "Hot", brain: fieldBrain }, { t: "Hot", brain: fieldBrain }, { t: "Hot", brain: fieldBrain }, { t: "Hot", brain: fieldBrain }]
@@ -182,9 +191,14 @@ if (process.argv[1]?.endsWith("sim.ts")) {
       if (sc[0]! > best) wins++;
       sum += sc[0]!;
       margin += sc[0]! - best;
+      // Place as the server scores it: ties share the higher place.
+      const place = 1 + sc.slice(1).filter((x) => x > sc[0]!).length;
+      placeSum += place;
+      if (place <= 3) top3++;
+      if (place === sc.length) last++;
     }
     console.log(
-      `${name.padEnd(14)} win ${((100 * wins) / N).toFixed(0)}%  avg ${(sum / N).toFixed(1)}  margin ${(margin / N).toFixed(1)}  (${((Date.now() - t0) / N).toFixed(0)}ms/match)`,
+      `${name.padEnd(14)} win ${((100 * wins) / N).toFixed(0)}%  avg ${(sum / N).toFixed(1)}  margin ${(margin / N).toFixed(1)}  top3 ${((100 * top3) / N).toFixed(0)}%  last ${((100 * last) / N).toFixed(0)}%  place ${(placeSum / N).toFixed(2)}  (${((Date.now() - t0) / N).toFixed(0)}ms/match)`,
     );
   }
 }
